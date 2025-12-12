@@ -23,7 +23,7 @@ def fetch_misp_attributes():
             controller='attributes',
             type_attribute='sha256',
             to_ids=1,
-            last='1825d',
+            publish_timestamp='90d',
             return_format='json'
         )
         return response
