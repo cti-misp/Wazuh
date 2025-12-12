@@ -13,20 +13,47 @@ VERIFY_SSL = False
 
 def fetch_misp_attributes():
     print(f"Connecting to {MISP_URL}...")
+    all_attributes = []
+    page = 1
+    limit = 1000  # Fetch in chunks to avoid server timeouts
+
     try:
         misp = PyMISP(MISP_URL, API_KEY, ssl=VERIFY_SSL)
         
-        # Search for attributes
-        # controller='attributes' is implied by the search method when not specified, but we use the kwargs
-        # to match the previous logic: sha256, to_ids=1, last 5 years (1825 days)
-        response = misp.search(
-            controller='attributes',
-            type_attribute='sha256',
-            to_ids=1,
-            publish_timestamp='90d',
-            return_format='json'
-        )
-        return response
+        while True:
+            print(f"Fetching page {page}...")
+            # Search for attributes with pagination
+            response = misp.search(
+                controller='attributes',
+                type_attribute='sha256',
+                to_ids=1,
+                publish_timestamp='90d',  # 90 days
+                return_format='json',
+                limit=limit,
+                page=page
+            )
+            
+            # Extract attributes from response
+            current_page_attributes = []
+            if isinstance(response, dict) and 'response' in response:
+                current_page_attributes = response['response'].get('Attribute', [])
+            elif isinstance(response, list):
+                current_page_attributes = response
+            elif isinstance(response, dict):
+                 current_page_attributes = response.get('Attribute', [])
+
+            if not current_page_attributes:
+                break
+                
+            all_attributes.extend(current_page_attributes)
+            
+            # If we got fewer than the limit, this is the last page
+            if len(current_page_attributes) < limit:
+                break
+                
+            page += 1
+            
+        return all_attributes
     except Exception as e:
         print(f"Error fetching data from MISP: {e}")
         sys.exit(1)
