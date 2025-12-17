@@ -1,5 +1,6 @@
 import sys
 import urllib3
+import concurrent.futures
 from pymisp import PyMISP
 
 # Disable warnings for insecure requests
@@ -7,102 +8,107 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # Configuration
 MISP_URL = "https://{IP-MISP}/" #<-- change this --> 
-API_KEY = "{API-Keys}" #<-- change  this --> 
+API_KEY = "{API-Key}" #<-- change  this --> 
 OUTPUT_FILE = "misp_sha256"
 VERIFY_SSL = False
+# Batch size for pagination. 
+# Recommended: 1000. 
+# Increasing this (e.g. 2000-5000) may improve speed but risks server-side timeouts or higher memory usage.
+BATCH_SIZE = 1000
+MAX_WORKERS = 5 # Number of parallel threads
 
-def fetch_misp_attributes():
-    print(f"Connecting to {MISP_URL}...")
-    all_attributes = []
-    page = 1
-    limit = 1000  # Fetch in chunks to avoid server timeouts
+def format_wazuh_entry(attr):
+    """Formats a single MISP attribute to Wazuh CDB format."""
+    value = attr.get("value")
+    event_id = attr.get("event_id")
+    # Wazuh CDB format: key:value
+    if value:
+        return f"{value}:Event_{event_id}"
+    return None
 
+def fetch_page_attributes(misp_instance, page, limit):
+    """Fetches a single page of attributes."""
+    print(f"Fetching page {page}...")
     try:
-        misp = PyMISP(MISP_URL, API_KEY, ssl=VERIFY_SSL)
+        response = misp_instance.search(
+            controller='attributes',
+            type_attribute='sha256', # type attribute
+            to_ids=1, # only ids
+            tags='NCSA', # tag name
+            publish_timestamp='90d',  # 90 days
+            return_format='json', # format response
+            limit=limit,
+            page=page
+        )
         
-        while True:
-            print(f"Fetching page {page}...")
-            # Search for attributes with pagination
-            response = misp.search(
-                controller='attributes',
-                type_attribute='sha256',
-                to_ids=1,
-                publish_timestamp='90d',  # 90 days
-                return_format='json',
-                limit=limit,
-                page=page
-            )
-            
-            # Extract attributes from response
-            current_page_attributes = []
-            if isinstance(response, dict) and 'response' in response:
-                current_page_attributes = response['response'].get('Attribute', [])
-            elif isinstance(response, list):
-                current_page_attributes = response
-            elif isinstance(response, dict):
-                 current_page_attributes = response.get('Attribute', [])
-
-            if not current_page_attributes:
-                break
-                
-            all_attributes.extend(current_page_attributes)
-            
-            # If we got fewer than the limit, this is the last page
-            if len(current_page_attributes) < limit:
-                break
-                
-            page += 1
-            
-        return all_attributes
+        if isinstance(response, dict) and 'response' in response:
+            return response['response'].get('Attribute', [])
+        elif isinstance(response, list):
+            return response
+        elif isinstance(response, dict):
+             return response.get('Attribute', [])
+        return []
     except Exception as e:
-        print(f"Error fetching data from MISP: {e}")
-        sys.exit(1)
+        print(f"Error fetching page {page}: {e}")
+        return []
 
-def format_for_wazuh(data):
-    cdb_entries = []
-    # PyMISP search returns a list of dictionaries directly or a dict with 'response' key depending on version/endpoint
-    # Handling both just in case, though search() usually returns the list of attributes directly if return_format='json'
-    
-    attributes = []
-    if isinstance(data, dict) and 'response' in data:
-        attributes = data['response'].get('Attribute', [])
-    elif isinstance(data, list):
-        attributes = data
-    else:
-        # Fallback or unexpected format
-        attributes = data.get('Attribute', []) if isinstance(data, dict) else []
+def fetch_and_export_attributes():
+    print(f"Connecting to {MISP_URL} with {MAX_WORKERS} workers...")
+    total_entries = 0
+    misp = PyMISP(MISP_URL, API_KEY, ssl=VERIFY_SSL) # Shared instance (PyMISP is generally thread-safe for reads)
 
-    print(f"Found {len(attributes)} attributes.")
-    
-    for attr in attributes:
-        # PyMISP returns dicts, keys might differ slightly depending on expansion, but 'value' is standard
-        value = attr.get("value")
-        event_id = attr.get("event_id")
-        comment = attr.get("comment", "")
-        
-        if value:
-            # Wazuh CDB format: key:value
-            entry = f"{value}:Event_{event_id}"
-            cdb_entries.append(entry)
+    with open(OUTPUT_FILE, 'w', encoding='utf-8') as f:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+            # Initial batch of tasks
+            future_to_page = {
+                executor.submit(fetch_page_attributes, misp, page, BATCH_SIZE): page 
+                for page in range(1, MAX_WORKERS + 1)
+            }
             
-    return cdb_entries
+            next_page_to_submit = MAX_WORKERS + 1
+            stop_submission = False
 
-def save_to_file(entries, filename):
-    try:
-        with open(filename, 'w', encoding='utf-8') as f:
-            for entry in entries:
-                f.write(f"{entry}\n")
-        print(f"Successfully wrote {len(entries)} entries to {filename}")
-    except IOError as e:
-        print(f"Error writing to file: {e}")
+            while future_to_page:
+                # Wait for at least one future to complete
+                done, _ = concurrent.futures.wait(
+                    future_to_page, return_when=concurrent.futures.FIRST_COMPLETED
+                )
+
+                for future in done:
+                    page = future_to_page.pop(future)
+                    try:
+                        attributes = future.result()
+                        count = 0
+                        for attr in attributes:
+                            entry = format_wazuh_entry(attr)
+                            if entry:
+                                f.write(f"{entry}\n")
+                                count += 1
+                        total_entries += count
+                        
+                        # Logic to continue or stop
+                        # If we got less than BATCH_SIZE, it implies end of data (or empty page)
+                        # So we shouldn't submit new pages deeply beyond this, 
+                        # BUT since tasks complete out of order, strictly stopping on *any* < limit is safer 
+                        # to ensure we don't hammer the server for page 1000 if page 5 was empty.
+                        if len(attributes) < BATCH_SIZE:
+                            stop_submission = True
+                        
+                        if not stop_submission:
+                            # Submit next page
+                            new_future = executor.submit(
+                                fetch_page_attributes, misp, next_page_to_submit, BATCH_SIZE
+                            )
+                            future_to_page[new_future] = next_page_to_submit
+                            next_page_to_submit += 1
+                            
+                    except Exception as exc:
+                        print(f"Page {page} generated an exception: {exc}")
+
+    print(f"Done. Successfully wrote {total_entries} entries to {OUTPUT_FILE}")
 
 def main():
-    data = fetch_misp_attributes()
-    entries = format_for_wazuh(data)
-    if entries:
-        save_to_file(entries, OUTPUT_FILE)
-    else:
-        print("No entries found to export.")
+    fetch_and_export_attributes()
 
 if __name__ == "__main__":
     main()
