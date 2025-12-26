@@ -148,6 +148,22 @@
 -w /etc/ossec.conf -p wa -k wazuh
 
 ########################
+## 12) Wazuh Monitoring execution Command
+########################
+# -------- root (AUID=0) --------
+-a always,exit -F arch=b64 -S execve -F auid=0 -F auid!=-1 -F key=audit-wazuh-c
+-a always,exit -F arch=b32 -S execve -F auid=0 -F auid!=-1 -F key=audit-wazuh-c
+
+# -------- www-data (UID=33) --------
+# uid=33 catches processes actually running as www-data (e.g., apache/php)
+-a always,exit -F arch=b64 -S execve -F uid=33 -F key=audit-wazuh-c
+-a always,exit -F arch=b32 -S execve -F uid=33 -F key=audit-wazuh-c
+
+# -------- normal users (AUID>=1000) --------
+-a always,exit -F arch=b64 -S execve -F auid>=1000 -F auid!=-1 -F key=audit-wazuh-c
+-a always,exit -F arch=b32 -S execve -F auid>=1000 -F auid!=-1 -F key=audit-wazuh-c
+
+########################
 ## End
 ########################
 # NOTE: Do NOT enable immutable (-e 2) until you're sure you won't need to change rules frequently.
