@@ -72,11 +72,11 @@
 ########################
 ## 5) Privilege escalation / risky syscalls
 ########################
-## Track setuid/setgid style actions
--a always,exit -F arch=b64 -S setuid,seteuid,setreuid,setresuid -k priv_esc
--a always,exit -F arch=b64 -S setgid,setegid,setregid,setresgid -k priv_esc
--a always,exit -F arch=b32 -S setuid,seteuid,setreuid,setresuid -k priv_esc
--a always,exit -F arch=b32 -S setgid,setegid,setregid,setresgid -k priv_esc
+## Privilege escalation / identity switching (valid syscalls)
+-a always,exit -F arch=b64 -S setuid,setreuid,setresuid,setfsuid -k priv_esc
+-a always,exit -F arch=b64 -S setgid,setregid,setresgid,setfsgid -k priv_esc
+-a always,exit -F arch=b32 -S setuid,setreuid,setresuid,setfsuid -k priv_esc
+-a always,exit -F arch=b32 -S setgid,setregid,setresgid,setfsgid -k priv_esc
 
 ## Track permission/ownership changes (often used for persistence)
 -a always,exit -F arch=b64 -S chmod,fchmod,fchmodat -k perm_mod
