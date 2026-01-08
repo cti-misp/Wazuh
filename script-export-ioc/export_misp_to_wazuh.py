@@ -1,5 +1,6 @@
 import sys
 import os
+import ipaddress
 import urllib3
 import concurrent.futures
 import argparse
@@ -19,11 +20,15 @@ BATCH_SIZE = 1000
 MAX_WORKERS = 5 # Number of parallel threads
 
 def format_wazuh_entry(attr):
-    """Formats a single MISP attribute to Wazuh CDB format."""
     value = attr.get("value")
     event_id = attr.get("event_id")
     # Wazuh CDB format: key:value
     if value:
+        # Check if the value contains a colon (IPv6, MAC address, etc.)
+        # These must be quoted in CDB format to avoid parsing errors.
+        if ":" in value:
+            return f'"{value}":Event_{event_id}'
+            
         return f"{value}:Event_{event_id}"
     return None
 
