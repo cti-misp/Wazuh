@@ -51,6 +51,17 @@ python3 export_misp_to_wazuh.py misp_sha256 --type sha256
 python3 export_misp_to_wazuh.py my_ips.txt --type ip-src
 ```
 
+### 3. กำหนดโฟลเดอร์ปลายทาง (Output Directory)
+สามารถใช้ option `--output-dir` เพื่อระบุโฟลเดอร์ที่ต้องการบันทึกไฟล์ (หากไม่มีโฟลเดอร์สคริปต์จะสร้างให้)
+
+```bash
+# ตัวอย่าง: ดึงข้อมูลทั้งหมดลงโฟลเดอร์ ./output
+python3 export_misp_to_wazuh.py all --output-dir ./output
+
+# ตัวอย่าง: ดึงเฉพาะไฟล์ SHA256 ลงโฟลเดอร์ /tmp/ioc
+python3 export_misp_to_wazuh.py misp_sha256 --type sha256 --output-dir /tmp/ioc
+```
+
 ## รูปแบบข้อมูล (Output Format)
 ไฟล์ที่ได้จะเป็นรูปแบบ Wazuh CDB:
 ```text
