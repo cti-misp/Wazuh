@@ -1,4 +1,5 @@
 import sys
+import os
 import urllib3
 import concurrent.futures
 import argparse
@@ -111,8 +112,13 @@ def main():
     parser = argparse.ArgumentParser(description="Export MISP attributes to Wazuh CDB format.")
     parser.add_argument("output_file", nargs="?", default="misp_sha256", help="Output file name or 'all' to export predefined sets.")
     parser.add_argument("--type", dest="type_attribute", default="sha256", help="MISP attribute type (e.g. sha256, ip-src, etc.)")
+    parser.add_argument("--output-dir", dest="output_dir", default=".", help="Directory to save the exported files")
     
     args = parser.parse_args()
+
+    # Create output directory if it doesn't exist
+    if args.output_dir != ".":
+        os.makedirs(args.output_dir, exist_ok=True)
 
     if args.output_file == "all":
         # Predefined mapping: output_file -> type_attribute
@@ -125,12 +131,14 @@ def main():
         
         print("Starting batch export for ALL types...")
         for out_file, attr_type in tasks:
-            print(f"--- Starting export: {attr_type} -> {out_file} ---")
-            fetch_and_export_attributes(out_file, attr_type)
+            full_path = os.path.join(args.output_dir, out_file)
+            print(f"--- Starting export: {attr_type} -> {full_path} ---")
+            fetch_and_export_attributes(full_path, attr_type)
             print(f"--- Finished export: {attr_type} ---\n")
     else:
         # Single file export
-        fetch_and_export_attributes(args.output_file, args.type_attribute)
+        full_path = os.path.join(args.output_dir, args.output_file)
+        fetch_and_export_attributes(full_path, args.type_attribute)
 
 if __name__ == "__main__":
     main()
